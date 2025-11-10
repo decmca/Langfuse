@@ -1,0 +1,46 @@
+# Evaluation Metrics Configuration
+
+retrieval_metrics:
+  - "precision@k"
+  - "recall@k"
+  - "mrr"  # Mean Reciprocal Rank
+  - "ndcg@k"  # Normalised Discounted Cumulative Gain
+  - "map"  # Mean Average Precision
+  
+  k_values: [1, 3, 5, 10]
+
+generation_metrics:
+  - "rouge"  # ROUGE-1, ROUGE-2, ROUGE-L
+  - "bleu"
+  - "exact_match"
+  - "f1_score"
+  - "bertscore"
+  
+  llm_judge:
+    enabled: false
+    model: "gpt-4o-mini"
+    metrics:
+      - "answer_relevancy"
+      - "faithfulness"
+      - "correctness"
+
+citation_metrics:
+  - "citation_coverage"  # % of statements with citations
+  - "citation_support_rate"  # % of citations that support the statement
+  - "citation_precision"  # % of retrieved docs that are cited
+  - "citation_recall"  # % of relevant docs that are cited
+  - "citation_contradiction_rate"  # % of citations that contradict the statement
+
+performance_metrics:
+  - "latency_p50"
+  - "latency_p95"
+  - "latency_p99"
+  - "tokens_per_second"
+  - "gpu_memory_peak_gb"
+
+langfuse_tracking:
+  enabled: true
+  log_traces: true
+  log_spans: true
+  log_metrics: true
+  batch_size: 10

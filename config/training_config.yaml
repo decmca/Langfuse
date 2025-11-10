@@ -1,0 +1,82 @@
+# Training Configurations
+
+embedding_training:
+  learning_rate: 2e-5
+  batch_size: 32
+  num_epochs: 3
+  warmup_steps: 500
+  loss_function: "contrastive"  # or "triplet"
+  margin: 0.5
+  weight_decay: 0.01
+  optimizer: "adamw"
+  scheduler: "linear"
+  gradient_accumulation_steps: 1
+  max_grad_norm: 1.0
+  
+  # Evaluation
+  eval_steps: 500
+  save_steps: 1000
+  logging_steps: 100
+
+generator_training:
+  learning_rate: 5e-6
+  per_device_train_batch_size: 2
+  per_device_eval_batch_size: 2
+  gradient_accumulation_steps: 4
+  num_train_epochs: 2
+  warmup_steps: 100
+  weight_decay: 0.01
+  optimizer: "adamw"
+  scheduler: "cosine"
+  max_grad_norm: 1.0
+  
+  # Multi-GPU Configuration (UCL Cloud: 4x 24GB GPUs)
+  distributed_type: "FSDP"  # Fully Sharded Data Parallel
+  mixed_precision: "bf16"   # BFloat16 for Ampere+ GPUs
+  num_processes: 4
+  
+  # FSDP Configuration
+  fsdp_config:
+    fsdp_sharding_strategy: "FULL_SHARD"  # Shard parameters, gradients, optimiser states
+    fsdp_offload_params: false  # Keep on GPU with 24GB each
+    fsdp_auto_wrap_policy: "TRANSFORMER_BASED_WRAP"
+    fsdp_backward_prefetch: "BACKWARD_PRE"
+    fsdp_state_dict_type: "FULL_STATE_DICT"
+    fsdp_forward_prefetch: false
+    fsdp_use_orig_params: true
+  
+  # Alternative: DeepSpeed ZeRO-3 Configuration
+  deepspeed_config:
+    zero_optimization:
+      stage: 3
+      offload_optimizer:
+        device: "none"  # Keep on GPU
+      offload_param:
+        device: "none"
+      overlap_comm: true
+      contiguous_gradients: true
+      reduce_bucket_size: 5e8
+      stage3_prefetch_bucket_size: 5e8
+      stage3_param_persistence_threshold: 1e6
+    
+    bf16:
+      enabled: true
+    
+    gradient_accumulation_steps: 4
+    train_micro_batch_size_per_gpu: 2
+    
+  # Evaluation
+  eval_steps: 250
+  save_steps: 500
+  logging_steps: 50
+  save_total_limit: 3
+  
+  # LoRA Configuration (optional, for efficient fine-tuning)
+  use_lora: true
+  lora_config:
+    r: 16
+    lora_alpha: 32
+    lora_dropout: 0.05
+    target_modules: ["q_proj", "v_proj", "k_proj", "o_proj"]
+    bias: "none"
+    task_type: "CAUSAL_LM"

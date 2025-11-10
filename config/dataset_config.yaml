@@ -1,0 +1,42 @@
+# Dataset Configurations
+
+datasets:
+  squad:
+    name: "squad"
+    version: "v2"  # Use SQuAD 2.0 with unanswerable questions
+    train_split: "train"
+    eval_split: "validation"
+    max_train_samples: 5000  # Limit for faster experimentation
+    max_eval_samples: 1000
+    context_key: "context"
+    question_key: "question"
+    answer_key: "answers"
+    
+  msmarco:
+    name: "microsoft/ms_marco"
+    config: "v2.1"
+    train_split: "train"
+    eval_split: "validation"
+    max_train_samples: 10000
+    max_eval_samples: 1000
+    query_key: "query"
+    passages_key: "passages"
+    
+  pubmedqa:
+    name: "bigbio/pubmed_qa"
+    config: "pubmed_qa_labeled_fold0_source"
+    trust_remote_code: true
+    train_split: "train"
+    eval_split: "validation"
+    max_train_samples: 5000
+    max_eval_samples: 500
+    question_key: "question"
+    context_key: "context"
+    answer_key: "long_answer"
+
+# Preprocessing settings
+preprocessing:
+  chunk_size: 512
+  chunk_overlap: 50
+  max_question_length: 256
+  max_context_length: 1024

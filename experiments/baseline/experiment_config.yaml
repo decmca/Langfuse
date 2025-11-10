@@ -1,0 +1,20 @@
+# Baseline Experiment Configuration
+
+experiment_name: "baseline_rag"
+description: "Baseline RAG system with off-the-shelf models"
+
+# Model configuration
+embedder_model: "sentence-transformers/all-MiniLM-L6-v2"
+generator_model: "Qwen/Qwen2.5-7B-Instruct"
+
+# Retrieval settings
+top_k: 5
+use_reranking: false
+
+# Generation settings
+temperature: 0.7
+top_p: 0.9
+max_new_tokens: 512
+
+# Prompt template
+system_prompt: "baseline"
