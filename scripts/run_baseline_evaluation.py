@@ -118,7 +118,7 @@ def main():
     # Index documents
     logger.info("Indexing documents...")
     all_contexts = []
-    for example in eval_
+    for example in eval_data:
         all_contexts.extend(example.contexts)
     
     # Remove duplicates
