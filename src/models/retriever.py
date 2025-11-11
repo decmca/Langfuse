@@ -108,21 +108,21 @@ class Retriever:
             show_progress_bar=show_progress
         )
         
-        # Prepare metadatas (use empty dict if not provided)
-        if metadatas is None:
-            metadatas = [{}] * num_docs
-        
         # Add to ChromaDB in batches
         for i in range(0, num_docs, batch_size):
             end_idx = min(i + batch_size, num_docs)
-            
-            self.collection.add(
-                ids=[f"doc_{j}" for j in range(i, end_idx)],
-                embeddings=embeddings[i:end_idx].tolist(),
-                documents=documents[i:end_idx],
-                metadatas=metadatas[i:end_idx]
-            )
-            
+
+            add_params = {
+                "ids": [f"doc_{j}" for j in range(i, end_idx)],
+                "embeddings": embeddings[i:end_idx].tolist(),
+                "documents": documents[i:end_idx]
+            }
+            # Only include metadatas if actually provided and non-empty
+            if metadatas is not None:
+                add_params["metadatas"] = metadatas[i:end_idx]
+
+            self.collection.add(**add_params)
+
             if show_progress:
                 logger.info(f"Indexed {end_idx}/{num_docs} documents")
         

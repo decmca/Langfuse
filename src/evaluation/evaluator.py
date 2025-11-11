@@ -108,9 +108,12 @@ class RAGEvaluator:
             Dictionary containing metrics for this example
         """
         # Step 1: Retrieve relevant documents
+        # Access top_k from the new nested retrieval config
+        top_k = self.config.get('retrieval', {}).get('top_k', 5)
+        
         retrieved_docs = self.retriever.retrieve(
             query=example.question,
-            top_k=self.config.get('retrieval', {}).get('top_k', 5)
+            top_k=top_k
         )
         
         # Step 2: Generate answer
@@ -167,7 +170,7 @@ class RAGEvaluator:
             )
         
         return result
-    
+
     def _aggregate_results(self, results: List[Dict[str, Any]]) -> Dict[str, float]:
         """
         Aggregate individual results into summary metrics.

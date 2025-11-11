@@ -1,21 +1,21 @@
 # Evaluation Metrics Configuration
 
 retrieval_metrics:
-  - "precision@k"
-  - "recall@k"
-  - "mrr"  # Mean Reciprocal Rank
-  - "ndcg@k"  # Normalised Discounted Cumulative Gain
-  - "map"  # Mean Average Precision
-  
+  metrics:
+    - "precision@k"
+    - "recall@k"
+    - "mrr"  # Mean Reciprocal Rank
+    - "ndcg@k"  # Normalised Discounted Cumulative Gain
+    - "map"  # Mean Average Precision
   k_values: [1, 3, 5, 10]
 
 generation_metrics:
-  - "rouge"  # ROUGE-1, ROUGE-2, ROUGE-L
-  - "bleu"
-  - "exact_match"
-  - "f1_score"
-  - "bertscore"
-  
+  metrics:
+    - "rouge"  # ROUGE-1, ROUGE-2, ROUGE-L
+    - "bleu"
+    - "exact_match"
+    - "f1_score"
+    - "bertscore"
   llm_judge:
     enabled: false
     model: "gpt-4o-mini"
@@ -44,3 +44,7 @@ langfuse_tracking:
   log_spans: true
   log_metrics: true
   batch_size: 10
+
+# Retrieval configuration
+retrieval:
+  top_k: 5

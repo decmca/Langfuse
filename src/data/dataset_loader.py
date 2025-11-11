@@ -27,13 +27,13 @@ class RAGExample:
         question: User query or question text
         contexts: List of relevant context passages
         answer: Ground truth answer text
-        meta Additional metadata (e.g., source, difficulty level)
+    metadata Additional metadata (e.g., source, difficulty level)
     """
     id: str
     question: str
     contexts: List[str]
     answer: str
-    meta: Dict[str, Any]
+    metadata: Dict[str, Any]
 
 
 class DatasetLoader:
