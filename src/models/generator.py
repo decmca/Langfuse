@@ -46,15 +46,27 @@ class Generator:
         max_new_tokens: int = 512
     ):
         """
-        Initialise LLM generator.
+        Initialise LLM generator with mixed precision and quantisation support.
         
         Args:
             model_name: HuggingFace model name or local path
             device: Compute device ("cuda", "cpu", or None for auto-detect)
-            load_in_8bit: Whether to use 8-bit quantisation
-            load_in_4bit: Whether to use 4-bit quantisation
-            torch_dtype: Data type for model weights ("float32", "float16", "bfloat16")
+            load_in_8bit: Whether to use 8-bit quantisation (reduces memory by ~50%, 
+                         achieves 3-5x speedup with minimal accuracy loss)
+            load_in_4bit: Whether to use 4-bit quantisation (even more aggressive 
+                         memory reduction, requires bitsandbytes)
+            torch_dtype: Data type for model weights:
+                        - "bfloat16" (recommended): Best for A100/H100/Quadro RTX, 
+                          excellent numerical stability, ~50% memory reduction
+                        - "float16": Compatible with most GPUs, but can have 
+                          numerical overflow on some models
+                        - "float32": Full precision, slower but most stable
             max_new_tokens: Maximum number of tokens to generate
+        
+        Notes:
+            - BF16 is preferred for Quadro RTX 6000 and newer GPUs
+            - Use batch sizes that are multiples of 8 for optimal tensor core utilisation
+            - Quantisation (8-bit/4-bit) requires the bitsandbytes library
         
         Raises:
             RuntimeError: If model loading fails
@@ -206,6 +218,136 @@ class Generator:
         logger.debug(f"Generated {output_token_count} tokens in {latency_ms:.2f}ms")
         
         return generated_text.strip(), metrics
+    
+    def generate_batch(
+        self,
+        queries: List[str],
+        contexts_list: List[List[Dict[str, Any]]],
+        temperature: float = 0.7,
+        top_p: float = 0.9,
+        do_sample: bool = True,
+        system_prompt: Optional[str] = None
+    ) -> List[Tuple[str, Dict[str, Any]]]:
+        """
+        Generate answers for multiple queries in batch for improved GPU utilisation.
+        
+        Args:
+            queries: List of user questions
+            contexts_list: List of retrieved context lists (one per query)
+            temperature: Sampling temperature (higher = more creative)
+            top_p: Nucleus sampling threshold
+            do_sample: Whether to use sampling (vs. greedy decoding)
+            system_prompt: Optional system prompt for instruction-tuned models
+        
+        Returns:
+            List of tuples (generated_answer, metrics_dict) for each query
+        """
+        if len(queries) != len(contexts_list):
+            raise ValueError("Number of queries must match number of context lists")
+        
+        start_time = time.time()
+        batch_size = len(queries)
+        
+        # Format prompts for all queries
+        formatted_prompts = [
+            self._format_prompt(q, ctx, system_prompt)
+            for q, ctx in zip(queries, contexts_list)
+        ]
+        
+        # Configure tokeniser for batch processing
+        # Left padding is crucial for causal LM batch generation
+        original_padding_side = self.tokenizer.padding_side
+        self.tokenizer.padding_side = "left"
+        
+        # Tokenise with padding to longest sequence in batch
+        inputs = self.tokenizer(
+            formatted_prompts,
+            return_tensors="pt",
+            padding="longest",  # Pad all sequences to match longest
+            truncation=True,
+            max_length=self.model.config.max_position_embeddings - self.max_new_tokens,
+            return_attention_mask=True
+        ).to(self.device)
+        
+        input_token_counts = inputs["attention_mask"].sum(dim=1).cpu().tolist()
+        
+        # Track GPU memory before generation
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+            gpu_memory_before = torch.cuda.max_memory_allocated() / 1e9
+        else:
+            gpu_memory_before = 0
+        
+        # Batch generation
+        with torch.no_grad():
+            outputs = self.model.generate(
+                **inputs,
+                max_new_tokens=self.max_new_tokens,
+                temperature=temperature,
+                top_p=top_p,
+                do_sample=do_sample,
+                pad_token_id=self.tokenizer.pad_token_id,
+                eos_token_id=self.tokenizer.eos_token_id,
+            )
+        
+        # Track GPU memory after generation
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+            gpu_memory_after = torch.cuda.max_memory_allocated() / 1e9
+            gpu_memory_used = (gpu_memory_after - gpu_memory_before) / batch_size
+        else:
+            gpu_memory_used = 0
+        
+        # Decode outputs for each item in batch
+        results = []
+        for i in range(batch_size):
+            input_len = input_token_counts[i]
+            
+            # Extract generated tokens (skip input)
+            generated_tokens = outputs[i][input_len:]
+            
+            generated_text = self.tokenizer.decode(
+                generated_tokens,
+                skip_special_tokens=True
+            )
+            
+            output_token_count = len(generated_tokens)
+            
+            # Extract citations
+            citations = self._extract_citations(generated_text)
+            
+            # Per-example metrics
+            metrics = {
+                "token_counts": {
+                    "input": input_len,
+                    "output": output_token_count
+                },
+                "citations_count": len(citations),
+                "gpu_memory_used_gb": gpu_memory_used  # Averaged across batch
+            }
+            
+            results.append((generated_text.strip(), metrics))
+        
+        # Restore original padding side
+        self.tokenizer.padding_side = original_padding_side
+        
+        # Calculate batch-level timing
+        end_time = time.time()
+        batch_latency_ms = (end_time - start_time) * 1000
+        avg_latency_ms = batch_latency_ms / batch_size
+        
+        # Update metrics with timing information
+        for i in range(batch_size):
+            results[i][1]["latency_ms"] = avg_latency_ms
+            results[i][1]["batch_latency_ms"] = batch_latency_ms
+            results[i][1]["batch_size"] = batch_size
+        
+        logger.debug(
+            f"Generated {batch_size} answers in {batch_latency_ms:.2f}ms "
+            f"({avg_latency_ms:.2f}ms per example)"
+        )
+        
+        return results
     
     def _format_prompt(
         self,
