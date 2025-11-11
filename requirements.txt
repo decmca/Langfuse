@@ -6,14 +6,12 @@ datasets>=2.16.0
 accelerate>=0.25.0
 deepspeed>=0.12.0
 
-# Vector Store & Retrieval
+# Vector Store & Retrieval - LanceDB ONLY
 lancedb>=0.5.0
 pyarrow>=14.0.0
-pysqlite3-binary>=0.5.0  # Required for ChromaDB on older systems
 sentence-transformers>=2.3.0
-#faiss-cpu>=1.7.4
-#chromadb>=0.4.22
-# faiss-gpu>=1.7.4  # Use if you want GPU-accelerated retrieval
+# REMOVED: pysqlite3-binary>=0.5.0  # Was required for ChromaDB
+# REMOVED: chromadb>=0.4.22
 
 # Langfuse Tracking
 langfuse>=3.7.0

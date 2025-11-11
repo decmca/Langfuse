@@ -33,10 +33,15 @@ generators:
     load_in_4bit: false
     torch_dtype: "bfloat16"
 
-# Retrieval settings
+# Retrieval settings (LanceDB)
 retrieval:
+  backend: "lancedb"  # Changed from "chromadb"
+  table_name: "rag_documents"
+  persist_directory: "./lancedb"
   top_k: 5
-  similarity_metric: "cosine"
+  min_similarity: 0.0
+  distance_type: "cosine"  # "cosine", "l2", or "dot"
+  batch_size: 1000  # For indexing
   use_reranking: false
   reranker_model: null
 

@@ -38,7 +38,7 @@ class LanceRetriever:
         self,
         embedder,
         table_name: str = "rag_documents",
-        persist_directory: str = "./lance_db",
+        persist_directory: str = "./lancedb",
         top_k: int = 5,
         min_similarity: float = 0.0,
         distance_type: str = "cosine"
@@ -54,13 +54,20 @@ class LanceRetriever:
             min_similarity: Minimum similarity score threshold (0-1)
             distance_type: Distance metric ("cosine", "l2", or "dot")
         """
+        from pathlib import Path
+        
         self.embedder = embedder
         self.top_k = top_k
         self.min_similarity = min_similarity
         self.distance_type = distance_type
         self.table_name = table_name
+        self.persist_directory = persist_directory
         
-        logger.info(f"Initialising LanceDB (table: {table_name})")
+        # Ensure directory exists
+        Path(persist_directory).mkdir(parents=True, exist_ok=True)
+        
+        logger.info(f"Initialising LanceDB at {persist_directory}")
+        logger.info(f"Table name: {table_name}, Distance metric: {distance_type}")
         
         # Connect to LanceDB
         self.db = lancedb.connect(persist_directory)
@@ -69,10 +76,10 @@ class LanceRetriever:
         try:
             self.table = self.db.open_table(table_name)
             count = self.table.count_rows()
-            logger.info(f"Loaded existing table with {count} documents")
+            logger.info(f"✓ Loaded existing table with {count:,} documents")
         except Exception:
             self.table = None
-            logger.info("Table will be created on first indexing")
+            logger.info("✓ Table will be created on first indexing")
     
     def index_documents(
         self,
@@ -99,33 +106,39 @@ class LanceRetriever:
             raise ValueError("Cannot index empty document list")
         
         num_docs = len(documents)
-        logger.info(f"Indexing {num_docs} documents...")
+        logger.info(f"Indexing {num_docs:,} documents (batch_size={batch_size})...")
         
-        # Generate embeddings
+        # Generate embeddings in batches
         embeddings = self.embedder.encode(
             documents,
             batch_size=batch_size,
-            show_progress_bar=show_progress
+            show_progress_bar=show_progress,
+            normalize_embeddings=(self.distance_type == "cosine")
         )
         
+        logger.info(f"Generated {len(embeddings):,} embeddings (dim={embeddings.shape[1]})")
+        
         # Prepare data for LanceDB
-        # LanceDB expects list of dicts with consistent schema
+        # Schema: {id: str, text: str, vector: List[float], **metadata}
         data = []
         for i, (doc, emb) in enumerate(zip(documents, embeddings)):
             record = {
                 "id": f"doc_{i}",
                 "text": doc,
-                "vector": emb.tolist(),
+                "vector": emb.tolist()
             }
             
             # Add metadata fields if provided
             if metadatas and i < len(metadatas):
+                # Flatten metadata into record (LanceDB supports nested dicts)
                 for key, value in metadatas[i].items():
-                    record[key] = value
+                    # Sanitise key names (replace spaces with underscores)
+                    safe_key = key.replace(" ", "_").replace("-", "_")
+                    record[safe_key] = value
             
             data.append(record)
         
-        # Create or append to table
+        # Create or overwrite table
         if self.table is None:
             # Create new table
             self.table = self.db.create_table(
@@ -133,13 +146,20 @@ class LanceRetriever:
                 data=data,
                 mode="overwrite"
             )
-            logger.info(f"Created new table with {len(data)} documents")
+            logger.info(f"✓ Created new table with {len(data):,} documents")
         else:
             # Append to existing table
             self.table.add(data)
-            logger.info(f"Added {len(data)} documents to existing table")
+            total = self.table.count_rows()
+            logger.info(f"✓ Added {len(data):,} documents (total: {total:,})")
         
-        logger.info("Document indexing complete")
+        # Create ANN index for faster search on large datasets
+        if num_docs > 10000:
+            logger.info("Building ANN index for faster queries (IVF-PQ)...")
+            self.table.create_index(metric=self.distance_type)
+            logger.info("✓ ANN index created")
+        
+        logger.info("✓ Document indexing complete")
     
     def retrieve(
         self,
@@ -167,48 +187,39 @@ class LanceRetriever:
             RuntimeError: If table hasn't been created yet
         """
         if self.table is None:
-            raise RuntimeError("Cannot retrieve from non-existent table. Index documents first.")
+            raise RuntimeError(
+                "Cannot retrieve from non-existent table. "
+                "Index documents first using index_documents()."
+            )
         
         k = top_k if top_k is not None else self.top_k
         
         # Encode query
-        query_embedding = self.embedder.encode_query(query)
+        query_embedding = self.embedder.encode_query(
+            query,
+            normalize=(self.distance_type == "cosine")
+        )
         
         # Build search query
         search = self.table.search(query_embedding.tolist())
         
         # Set distance metric
-        if self.distance_type == "cosine":
-            search = search.metric("cosine")
-        elif self.distance_type == "l2":
-            search = search.metric("l2")
-        elif self.distance_type == "dot":
-            search = search.metric("dot")
+        search = search.metric(self.distance_type)
         
-        # Apply filter if provided
+        # Apply metadata filter if provided
         if filter_metadata:
             search = search.where(filter_metadata)
         
-        # Execute search
+        # Execute search with limit
         results = search.limit(k).to_list()
         
         # Format results
         retrieved_docs = []
         
         for result in results:
-            # LanceDB returns distance, convert to similarity
+            # Convert distance to similarity score
             distance = result.get("_distance", 0.0)
-            
-            # Convert distance to similarity based on metric type
-            if self.distance_type == "cosine":
-                # Cosine distance is already similarity-like (1 = identical)
-                similarity = 1.0 - distance
-            elif self.distance_type == "l2":
-                # L2 distance: smaller is better, convert to similarity
-                similarity = 1.0 / (1.0 + distance)
-            else:  # dot product
-                # Dot product: higher is better
-                similarity = distance
+            similarity = self._distance_to_similarity(distance)
             
             # Filter by minimum similarity
             if similarity >= self.min_similarity:
@@ -225,16 +236,43 @@ class LanceRetriever:
                     "id": result["id"]
                 })
         
-        logger.debug(f"Retrieved {len(retrieved_docs)} documents for query")
+        logger.debug(f"Retrieved {len(retrieved_docs)}/{k} documents above threshold")
         
         return retrieved_docs
+    
+    def _distance_to_similarity(self, distance: float) -> float:
+        """
+        Convert distance metric to similarity score (0-1, higher is better).
+        
+        Args:
+            distance: Distance value from LanceDB
+        
+        Returns:
+            Similarity score in range [0, 1]
+        """
+        if self.distance_type == "cosine":
+            # Cosine distance: 0 = identical, 2 = opposite
+            # Similarity = 1 - (distance / 2)
+            return 1.0 - (distance / 2.0)
+        elif self.distance_type == "l2":
+            # L2 distance: 0 = identical, larger = more different
+            # Use exponential decay for similarity
+            return 1.0 / (1.0 + distance)
+        else:  # dot product
+            # Dot product: higher = more similar (for normalised vectors)
+            return max(0.0, min(1.0, distance))
     
     def clear_collection(self) -> None:
         """Clear all documents from the table."""
         if self.table is not None:
-            self.db.drop_table(self.table_name)
-            self.table = None
-            logger.info("Table cleared")
+            try:
+                self.db.drop_table(self.table_name)
+                self.table = None
+                logger.info(f"✓ Cleared table '{self.table_name}'")
+            except Exception as e:
+                logger.warning(f"Could not clear table: {e}")
+        else:
+            logger.warning("No table to clear")
     
     def get_stats(self) -> Dict[str, Any]:
         """
@@ -244,10 +282,30 @@ class LanceRetriever:
             Dictionary containing table statistics
         """
         if self.table is None:
-            return {"exists": False, "count": 0}
+            return {
+                "exists": False,
+                "count": 0,
+                "table_name": self.table_name,
+                "persist_directory": self.persist_directory
+            }
         
-        return {
-            "exists": True,
-            "count": self.table.count_rows(),
-            "schema": str(self.table.schema),
-        }
+        try:
+            count = self.table.count_rows()
+            schema = self.table.schema
+            
+            return {
+                "exists": True,
+                "count": count,
+                "table_name": self.table_name,
+                "persist_directory": self.persist_directory,
+                "distance_metric": self.distance_type,
+                "schema_fields": [field.name for field in schema],
+                "embedding_dimension": schema.field("vector").type.list_size if hasattr(schema.field("vector").type, "list_size") else "unknown"
+            }
+        except Exception as e:
+            logger.error(f"Error getting stats: {e}")
+            return {
+                "exists": True,
+                "count": "error",
+                "error": str(e)
+            }

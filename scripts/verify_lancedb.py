@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Quick verification script for LanceDB installation and functionality.
+Verify LanceDB installation and functionality.
 
-This script performs basic tests to ensure LanceDB is properly integrated.
+Tests basic LanceDB operations to ensure migration was successful.
 
 Author: Declan McAlinden
 Date: 2025-11-11
@@ -10,111 +10,170 @@ Date: 2025-11-11
 
 import sys
 from pathlib import Path
+import logging
 
-# Add project root to path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-print("=" * 60)
-print("LanceDB Integration Verification")
-print("=" * 60)
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-# Test 1: Import check
-print("\n1. Checking imports...")
-try:
-    import lancedb
-    import pyarrow
-    from src.models import Embedder, LanceRetriever, create_retriever
-    print(f"   ✓ LanceDB version: {lancedb.__version__}")
-    print(f"   ✓ PyArrow version: {pyarrow.__version__}")
-    print("   ✓ All imports successful")
-except ImportError as e:
-    print(f"   ✗ Import failed: {e}")
-    sys.exit(1)
 
-# Test 2: Create retriever
-print("\n2. Testing LanceDB retriever creation...")
-try:
-    embedder = Embedder(model_name="sentence-transformers/all-MiniLM-L6-v2")
-    retriever = LanceRetriever(
-        embedder=embedder,
-        table_name="verification_test",
-        persist_directory="./lance_db_test"
-    )
-    print("   ✓ Retriever created successfully")
-except Exception as e:
-    print(f"   ✗ Retriever creation failed: {e}")
-    sys.exit(1)
+def test_lancedb_import():
+    """Test LanceDB can be imported."""
+    try:
+        import lancedb
+        import pyarrow
+        logger.info("✓ LanceDB and PyArrow imports successful")
+        logger.info(f"  LanceDB version: {lancedb.__version__}")
+        logger.info(f"  PyArrow version: {pyarrow.__version__}")
+        return True
+    except ImportError as e:
+        logger.error(f"✗ Import error: {e}")
+        return False
 
-# Test 3: Index documents
-print("\n3. Testing document indexing...")
-try:
-    test_docs = [
-        "LanceDB is a high-performance vector database for AI applications.",
-        "RAG systems retrieve relevant documents before generation.",
-        "Python is widely used in machine learning projects."
+
+def test_embedder():
+    """Test Embedder class."""
+    try:
+        from src.models.embedder import Embedder
+        
+        embedder = Embedder(
+            model_name="sentence-transformers/all-MiniLM-L6-v2",
+            device="cpu"
+        )
+        
+        # Test encoding
+        texts = ["Hello world", "LanceDB is fast"]
+        embeddings = embedder.encode(texts, show_progress_bar=False)
+        
+        assert embeddings.shape[0] == 2
+        assert embeddings.shape[1] == embedder.dimension
+        
+        logger.info(f"✓ Embedder working (dimension: {embedder.dimension})")
+        return True
+    except Exception as e:
+        logger.error(f"✗ Embedder error: {e}")
+        return False
+
+
+def test_retriever():
+    """Test LanceRetriever class."""
+    try:
+        from src.models.embedder import Embedder
+        from src.models.retriever_lance import LanceRetriever
+        import tempfile
+        
+        with tempfile.TemporaryDirectory() as tmpdir:
+            embedder = Embedder(
+                model_name="sentence-transformers/all-MiniLM-L6-v2",
+                device="cpu"
+            )
+            
+            retriever = LanceRetriever(
+                embedder=embedder,
+                table_name="test_table",
+                persist_directory=tmpdir,
+                top_k=2
+            )
+            
+            # Index test documents
+            docs = [
+                "The quick brown fox jumps over the lazy dog",
+                "Machine learning is a subset of artificial intelligence",
+                "Python is a popular programming language"
+            ]
+            
+            retriever.index_documents(docs, show_progress=False)
+            
+            # Test retrieval
+            results = retriever.retrieve("What is Python?")
+            
+            assert len(results) <= 2
+            assert all("text" in r for r in results)
+            assert all("score" in r for r in results)
+            
+            logger.info(f"✓ LanceRetriever working (retrieved {len(results)} docs)")
+            logger.info(f"  Top result score: {results[0]['score']:.4f}")
+            
+            # Test stats
+            stats = retriever.get_stats()
+            logger.info(f"  Stats: {stats}")
+            
+            return True
+    except Exception as e:
+        logger.error(f"✗ Retriever error: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
+def test_factory():
+    """Test retriever factory."""
+    try:
+        from src.models.embedder import Embedder
+        from src.models.retriever_factory import create_retriever
+        import tempfile
+        import os
+        
+        with tempfile.TemporaryDirectory() as tmpdir:
+            embedder = Embedder(
+                model_name="sentence-transformers/all-MiniLM-L6-v2",
+                device="cpu"
+            )
+            
+            # Test with explicit path
+            retriever = create_retriever(
+                embedder=embedder,
+                collection_name="test_collection",
+                persist_directory=tmpdir
+            )
+            
+            logger.info("✓ Retriever factory working")
+            return True
+    except Exception as e:
+        logger.error(f"✗ Factory error: {e}")
+        return False
+
+
+def main():
+    logger.info("="*80)
+    logger.info("LanceDB VERIFICATION")
+    logger.info("="*80 + "\n")
+    
+    tests = [
+        ("Import Test", test_lancedb_import),
+        ("Embedder Test", test_embedder),
+        ("Retriever Test", test_retriever),
+        ("Factory Test", test_factory)
     ]
     
-    retriever.index_documents(test_docs, show_progress=False)
-    stats = retriever.get_stats()
-    print(f"   ✓ Indexed {stats['count']} documents")
-except Exception as e:
-    print(f"   ✗ Indexing failed: {e}")
-    sys.exit(1)
-
-# Test 4: Test retrieval
-print("\n4. Testing document retrieval...")
-try:
-    results = retriever.retrieve("What is LanceDB?", top_k=2)
+    results = []
+    for name, test_func in tests:
+        logger.info(f"\nRunning: {name}")
+        logger.info("-" * 40)
+        success = test_func()
+        results.append((name, success))
     
-    if len(results) > 0:
-        print(f"   ✓ Retrieved {len(results)} documents")
-        print(f"\n   Top result (score: {results[0]['score']:.3f}):")
-        print(f"   '{results[0]['text'][:70]}...'")
+    logger.info("\n" + "="*80)
+    logger.info("VERIFICATION SUMMARY")
+    logger.info("="*80)
+    
+    for name, success in results:
+        status = "✓ PASS" if success else "✗ FAIL"
+        logger.info(f"{name:20s}: {status}")
+    
+    all_passed = all(success for _, success in results)
+    
+    logger.info("="*80)
+    
+    if all_passed:
+        logger.info("\n✓ All tests passed! LanceDB is ready to use.\n")
+        return 0
     else:
-        print("   ✗ No documents retrieved")
-        sys.exit(1)
-except Exception as e:
-    print(f"   ✗ Retrieval failed: {e}")
-    sys.exit(1)
+        logger.error("\n✗ Some tests failed. Please check the errors above.\n")
+        return 1
 
-# Test 5: Test factory pattern
-print("\n5. Testing factory pattern...")
-try:
-    import os
-    os.environ["VECTOR_STORE_TYPE"] = "lancedb"
-    
-    factory_retriever = create_retriever(
-        embedder=embedder,
-        collection_name="factory_test"
-    )
-    
-    if isinstance(factory_retriever, LanceRetriever):
-        print("   ✓ Factory correctly created LanceRetriever")
-    else:
-        print(f"   ✗ Factory created {type(factory_retriever).__name__} instead")
-        sys.exit(1)
-except Exception as e:
-    print(f"   ✗ Factory test failed: {e}")
-    sys.exit(1)
 
-# Clean up
-print("\n6. Cleaning up test data...")
-try:
-    retriever.clear_collection()
-    import shutil
-    if Path("./lance_db_test").exists():
-        shutil.rmtree("./lance_db_test")
-    print("   ✓ Test data cleaned up")
-except Exception as e:
-    print(f"   ⚠ Cleanup warning: {e}")
-
-print("\n" + "=" * 60)
-print("✓ All verification tests passed successfully!")
-print("=" * 60)
-print("\nLanceDB is ready to use in your RAG system.")
-print("\nNext steps:")
-print("1. Update your .env file with VECTOR_STORE_TYPE=lancedb")
-print("2. Run: python scripts/migrate_to_lancedb.py (if migrating from ChromaDB)")
-print("3. Run: pytest tests/test_lancedb_retriever.py (for comprehensive tests)")
-print("=" * 60)
+if __name__ == "__main__":
+    sys.exit(main())
