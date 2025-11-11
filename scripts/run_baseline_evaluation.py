@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
-# (See earlier content) — Full file inserted
 """
 Run baseline RAG evaluation with Langfuse tracking.
 
 This script establishes baseline performance metrics before any optimisations.
+Uses LanceDB for vector storage.
 
 Usage:
     python scripts/run_baseline_evaluation.py --dataset squad --max_samples 1000
 
 Author: Declan McAlinden
-Date: 2025-11-10
+Date: 2025-11-11
 """
 
 import argparse
@@ -23,7 +23,7 @@ sys.path.insert(0, str(project_root))
 
 from src.data.dataset_loader import DatasetLoader
 from src.models.embedder import Embedder
-from src.models.retriever import Retriever
+from src.models.retriever_factory import create_retriever
 from src.models.generator import Generator
 from src.evaluation.evaluator import RAGEvaluator
 from src.tracking.langfuse_tracker import LangfuseTracker
@@ -71,6 +71,19 @@ def parse_args():
         default="Qwen/Qwen2.5-7B-Instruct",
         help="Generator model to use"
     )
+    parser.add_argument(
+        "--top_k",
+        type=int,
+        default=5,
+        help="Number of documents to retrieve per query (default: 5)"
+    )
+    parser.add_argument(
+        "--distance_type",
+        type=str,
+        default="cosine",
+        choices=["cosine", "l2", "dot"],
+        help="Distance metric for LanceDB (default: cosine)"
+    )
     
     return parser.parse_args()
 
@@ -79,10 +92,16 @@ def main():
     """Main execution function."""
     args = parse_args()
     
-    logger.info(f"Starting baseline evaluation on {args.dataset}")
+    logger.info("="*80)
+    logger.info("BASELINE RAG EVALUATION - LanceDB Backend")
+    logger.info("="*80)
+    logger.info(f"Dataset: {args.dataset}")
     logger.info(f"Embedder: {args.embedder}")
     logger.info(f"Generator: {args.generator}")
     logger.info(f"Batch size: {args.batch_size}")
+    logger.info(f"Top-k retrieval: {args.top_k}")
+    logger.info(f"Distance metric: {args.distance_type}")
+    logger.info("="*80 + "\n")
     
     # Experiment configuration
     exp_config = {
@@ -91,7 +110,10 @@ def main():
         "embedder_model": args.embedder,
         "generator_model": args.generator,
         "max_samples": args.max_samples,
-        "batch_size": args.batch_size
+        "batch_size": args.batch_size,
+        "vector_store": "lancedb",
+        "top_k": args.top_k,
+        "distance_type": args.distance_type
     }
     
     # Initialise Langfuse tracker
@@ -109,30 +131,40 @@ def main():
         max_samples=args.max_samples
     )
     
-    logger.info(f"Loaded {len(eval_data)} evaluation examples")
+    logger.info(f"Loaded {len(eval_data)} evaluation examples\n")
     
     # Initialise models
     logger.info("Loading embedding model...")
     embedder = Embedder(model_name=args.embedder)
     
-    logger.info("Initialising retriever...")
-    retriever = Retriever(
+    logger.info("Initialising LanceDB retriever...")
+    retriever = create_retriever(
         embedder=embedder,
         collection_name=f"{args.dataset}_baseline",
-        persist_directory=str(project_root / "chroma_db"),
-        top_k=5
+        top_k=args.top_k,
+        distance_type=args.distance_type
     )
     
     # Index documents
-    logger.info("Indexing documents...")
+    logger.info("Preparing document corpus...")
     all_contexts = []
     for example in eval_data:
         all_contexts.extend(example.contexts)
     
-    # Remove duplicates
-    all_contexts = list(set(all_contexts))
-    logger.info(f"Indexing {len(all_contexts)} unique document chunks...")
-    retriever.index_documents(all_contexts, show_progress=True)
+    # Remove duplicates whilst preserving order
+    seen = set()
+    unique_contexts = []
+    for ctx in all_contexts:
+        if ctx not in seen:
+            seen.add(ctx)
+            unique_contexts.append(ctx)
+    
+    logger.info(f"Indexing {len(unique_contexts)} unique document chunks...")
+    retriever.index_documents(unique_contexts, show_progress=True)
+    
+    # Verify indexing
+    stats = retriever.get_stats()
+    logger.info(f"Index statistics: {stats}\n")
     
     # Initialise generator
     logger.info("Loading generator model...")
@@ -151,6 +183,7 @@ def main():
     
     # Run evaluation
     logger.info("Running evaluation...")
+    logger.info("="*80)
     results = evaluator.evaluate(
         eval_data, 
         show_progress=True,
@@ -168,7 +201,8 @@ def main():
         logger.info(f"{metric_name:30s}: {value:.4f}")
     logger.info("="*80)
     
-    logger.info("\nEvaluation complete. Check Langfuse dashboard for detailed traces.")
+    logger.info("\n✓ Evaluation complete. Check Langfuse dashboard for detailed traces.")
+    logger.info(f"✓ Vector database persisted at: {retriever.persist_directory}")
 
 
 if __name__ == "__main__":
