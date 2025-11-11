@@ -132,7 +132,7 @@ class Retriever:
         self,
         query: str,
         top_k: Optional[int] = None,
-        filter_meta Optional[Dict[str, Any]] = None
+        filter_metadata: Optional[Dict[str, Any]] = None
     ) -> List[Dict[str, Any]]:
         """
         Retrieve most relevant documents for a given query.

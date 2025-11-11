@@ -1,5 +1,3 @@
-# (Content truncated for brevity in this script header comment)
-# Full content inserted below
 """
 Langfuse integration wrapper for comprehensive experiment tracking.
 
@@ -8,6 +6,7 @@ with support for self-hosted models (no API cost tracking, focuses on throughput
 
 Author: Declan McAlinden
 Date: 2025-11-10
+Updated: 2025-11-11 (Langfuse v3 compatibility)
 """
 
 import os
@@ -15,7 +14,7 @@ import time
 from typing import Dict, Any, Optional, List
 from datetime import datetime
 import torch
-from langfuse.decorators import observe, langfuse_context
+from langfuse import observe, Langfuse
 from dotenv import load_dotenv
 import logging
 
@@ -40,6 +39,7 @@ class LangfuseTracker:
         experiment_name (str): Name of the current experiment
         experiment_config (Dict[str, Any]): Experiment configuration dictionary
         start_time (float): Experiment start timestamp
+        langfuse (Langfuse): Langfuse client instance
     """
     
     def __init__(
@@ -73,6 +73,9 @@ class LangfuseTracker:
         self.experiment_config = experiment_config or {}
         self.start_time = time.time()
         
+        # Initialize Langfuse client
+        self.langfuse = Langfuse()
+        
         logger.info(f"Initialised Langfuse tracker for experiment: {experiment_name}")
         
         # Log experiment initialisation
@@ -81,7 +84,7 @@ class LangfuseTracker:
     @observe(name="experiment_initialisation")
     def _log_experiment_start(self) -> None:
         """Log experiment initialisation with configuration details."""
-        langfuse_context.update_current_trace(
+        self.langfuse.update_current_trace(
             metadata={
                 "experiment_name": self.experiment_name,
                 "start_time": datetime.now().isoformat(),
@@ -123,7 +126,7 @@ class LangfuseTracker:
         retrieved_contexts: List[Dict[str, Any]],
         generated_answer: str,
         citations: List[str],
-        meta Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
         token_counts: Optional[Dict[str, int]] = None,
         gpu_memory_used_gb: Optional[float] = None,
         latency_ms: Optional[float] = None
@@ -138,7 +141,7 @@ class LangfuseTracker:
             retrieved_contexts: List of retrieved document chunks with metadata
             generated_answer: LLM-generated response
             citations: List of citation identifiers used in the answer
-            meta Additional metadata (e.g., dataset name, iteration number)
+            metadata: Additional metadata (e.g., dataset name, iteration number)
             token_counts: {"input": 150, "output": 75} for throughput tracking
             gpu_memory_used_gb: Peak GPU memory usage during generation
             latency_ms: Total query latency in milliseconds
@@ -171,8 +174,8 @@ class LangfuseTracker:
         if latency_ms:
             tracking_metadata["latency_ms"] = round(latency_ms, 2)
         
-        # Update Langfuse observation
-        langfuse_context.update_current_observation(
+        # Update Langfuse observation (v3 syntax)
+        self.langfuse.update_current_generation(
             input=query,
             output=generated_answer,
             metadata=tracking_metadata
@@ -195,7 +198,7 @@ class LangfuseTracker:
             step: Training step or iteration number (optional)
             split: Dataset split name ("train", "eval", "test")
         """
-        langfuse_context.update_current_observation(
+        self.langfuse.update_current_span(
             output=metrics,
             metadata={
                 "experiment": self.experiment_name,
@@ -245,7 +248,7 @@ class LangfuseTracker:
         if gradient_norm is not None:
             metrics["gradient_norm"] = round(gradient_norm, 4)
         
-        langfuse_context.update_current_observation(
+        self.langfuse.update_current_span(
             output=metrics,
             metadata={
                 "experiment": self.experiment_name,
@@ -279,7 +282,7 @@ class LangfuseTracker:
                     pct_change = ((improved_val - baseline_val) / baseline_val) * 100
                     improvements[f"{metric_name}_improvement_pct"] = round(pct_change, 2)
         
-        langfuse_context.update_current_observation(
+        self.langfuse.update_current_span(
             output={
                 "baseline": baseline_metrics,
                 "improved": improved_metrics,
