@@ -54,6 +54,12 @@ def parse_args():
         help="Maximum number of samples to evaluate (default: 1000)"
     )
     parser.add_argument(
+        "--batch_size",
+        type=int,
+        default=8,
+        help="Batch size for evaluation (default: 8, increase for better GPU utilisation)"
+    )
+    parser.add_argument(
         "--embedder",
         type=str,
         default="sentence-transformers/all-MiniLM-L6-v2",
@@ -76,6 +82,7 @@ def main():
     logger.info(f"Starting baseline evaluation on {args.dataset}")
     logger.info(f"Embedder: {args.embedder}")
     logger.info(f"Generator: {args.generator}")
+    logger.info(f"Batch size: {args.batch_size}")
     
     # Experiment configuration
     exp_config = {
@@ -83,7 +90,8 @@ def main():
         "dataset": args.dataset,
         "embedder_model": args.embedder,
         "generator_model": args.generator,
-        "max_samples": args.max_samples
+        "max_samples": args.max_samples,
+        "batch_size": args.batch_size
     }
     
     # Initialise Langfuse tracker
@@ -143,7 +151,11 @@ def main():
     
     # Run evaluation
     logger.info("Running evaluation...")
-    results = evaluator.evaluate(eval_data, show_progress=True)
+    results = evaluator.evaluate(
+        eval_data, 
+        show_progress=True,
+        batch_size=args.batch_size
+    )
     
     # Log results to Langfuse
     tracker.log_metrics(results, split="validation")
